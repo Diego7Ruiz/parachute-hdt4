@@ -136,6 +136,8 @@ para responder la pregunta, debes decir claramente:
 para responder esa pregunta."
 
 Responde de forma clara, breve y natural.
+
+No utilices formato Markdown. Responde en texto plano.
 """
 
 
