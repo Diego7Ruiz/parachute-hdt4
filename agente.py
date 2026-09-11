@@ -142,6 +142,7 @@ No utilices formato Markdown. Responde en texto plano.
 
 
 def ejecutar_agente(pregunta):
+    # Primera llamada: el modelo decide si necesita usar la herramienta
     mensajes = [
         {
             "role": "system",
@@ -162,35 +163,79 @@ def ejecutar_agente(pregunta):
 
     mensaje = respuesta.choices[0].message
 
+    # Si el modelo no pidió herramienta
     if not mensaje.tool_calls:
-        return mensaje.content
+        if mensaje.content:
+            return mensaje.content
 
-    mensajes.append(mensaje)
+        return (
+            "No cuento con información suficiente en la base "
+            "de conocimientos para responder esa pregunta."
+        )
+
+    # Ejecutar la herramienta
+    resultado_herramienta = None
 
     for tool_call in mensaje.tool_calls:
         if tool_call.function.name == "buscar_en_base_conocimiento":
-
             argumentos = json.loads(tool_call.function.arguments)
 
-            resultado = buscar_en_base_conocimiento(
-                argumentos["consulta"]
+            resultado_herramienta = buscar_en_base_conocimiento(
+                pregunta
             )
 
-            mensajes.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(
-                        resultado,
-                        ensure_ascii=False
-                    ),
-                }
-            )
+            break
+
+    # Si no encontramos información suficientemente relacionada,
+    # no necesitamos volver a consultar al LLM.
+    if (
+        resultado_herramienta is None
+        or not resultado_herramienta["encontrado"]
+    ):
+        return (
+            "La base de conocimientos no contiene información "
+            "suficiente para responder esa pregunta."
+        )
+
+    # Convertimos los resultados recuperados en contexto
+    contexto = ""
+
+    for documento in resultado_herramienta["resultados"]:
+        contexto += (
+            f"FAQ: {documento['faq_id']}\n"
+            f"Categoría: {documento['categoria']}\n"
+            f"Pregunta: {documento['pregunta']}\n"
+            f"Respuesta: {documento['respuesta']}\n\n"
+        )
+
+    # Segunda llamada LIMPIA:
+    # ya no enviamos el historial del tool call
+    mensajes_finales = [
+        {
+            "role": "system",
+            "content": (
+                "Eres un agente de atención al cliente de Parachute S.A. "
+                "Responde únicamente utilizando el contexto proporcionado. "
+                "No utilices conocimientos externos. "
+                "No inventes información. "
+                "Responde de forma breve y natural. "
+                "No utilices formato Markdown."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Pregunta del usuario:\n{pregunta}\n\n"
+                f"Información recuperada de la base de conocimientos:\n"
+                f"{contexto}\n"
+                f"Responde la pregunta utilizando únicamente esta información."
+            ),
+        },
+    ]
 
     respuesta_final = cliente.chat.completions.create(
         model=MODELO_LLM,
-        messages=mensajes,
-        tools=tools,
+        messages=mensajes_finales,
     )
 
     return respuesta_final.choices[0].message.content
